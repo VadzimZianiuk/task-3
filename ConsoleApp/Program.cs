@@ -1,7 +1,7 @@
-﻿using FSVisitor;
-using System;
+﻿using System;
 using System.Linq;
-
+using FileSystemVisitor;
+using FileSystemVisitor.Interfaces;
 
 namespace ConsoleApp
 {
@@ -14,12 +14,12 @@ namespace ConsoleApp
             {
                 try
                 {
-                    var visitor = new FileSystemVisitor(input);
+                    var visitor = FileSystemVisitor.FileSystemVisitor.CreateInstance(input);
                     visitor.Start += OnStart;
                     visitor.Finish += OnFinish;
                     visitor.DirectoryFinded += OnDirectoryFinded;
                     visitor.FileFinded += OnFileFinded;
-                    visitor.Search().Count();
+                    WriteLineCenter($"Found: {visitor.Search().Count()} item(s)");
                 }
                 catch (Exception ex)
                 {
@@ -37,7 +37,7 @@ namespace ConsoleApp
 
         private static void OnStart(object sender, EventArgs eventArgs)
         {
-            if (sender is FileSystemVisitor visitor)
+            if (sender is IFileSystemVisitor visitor)
             {
                 WriteLineCenter($"Start search in {visitor.Path}");
             }
@@ -45,7 +45,7 @@ namespace ConsoleApp
 
         private static void OnFinish(object sender, EventArgs eventArgs)
         {
-            if (sender is FileSystemVisitor visitor)
+            if (sender is IFileSystemVisitor visitor)
             {
                 WriteLineCenter($"Finish search in {visitor.Path}");
             }

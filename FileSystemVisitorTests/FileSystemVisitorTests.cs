@@ -1,4 +1,4 @@
-using FSVisitor;
+using FileSystemVisitor;
 using Moq;
 using Moq.Protected;
 using NUnit.Framework;
@@ -12,308 +12,304 @@ namespace FileSystemVisitorTests
     [TestFixture]
     internal class FileSystemVisitorTests
     {
-        private readonly string ValidPath = Directory.GetCurrentDirectory();
+        private const int DirectoriesCount = 15;
+        private const int FilesCount = 15;
+        private static readonly IEnumerable<string> Directories = Enumerable.Range(0, DirectoriesCount).Select(x => $"Directory #{x}");
+        private static readonly IEnumerable<string> Files = Enumerable.Range(0, FilesCount).Select(x => $"File #{x}");
+        private readonly string validPath = Directory.GetCurrentDirectory();
+        private readonly EventCounters actualEventCounters = new EventCounters();
+
+        private static IEnumerable<TestCaseData> TestCases
+        {
+            get
+            {
+                yield return new TestCaseData(Directories, Files, Directories.Concat(Files), new EventCounters(Directories, Files));
+                yield return new TestCaseData(Directories, Enumerable.Empty<string>(), Directories, new EventCounters(Directories, null));
+                yield return new TestCaseData(Enumerable.Empty<string>(), Files, Files, new EventCounters(null, Files));
+                yield return new TestCaseData(null, null, Enumerable.Empty<string>(), new EventCounters { Start = 1, Finish = 1 });
+            }
+        }
+
+        private static IEnumerable<TestCaseData> TestCasesWithPredicate
+        {
+            get
+            {
+                yield return new TestCaseData(
+                    Directories,
+                    Files,
+                    (Predicate<string>)(x => true),
+                    Directories.Concat(Files),
+                    new EventCounters(Directories, Files) { FilteredDirectoriesFind = DirectoriesCount, FilteredFilesFind = FilesCount });
+                yield return new TestCaseData(
+                     Directories,
+                     Files,
+                     Delegate.Combine((Predicate<string>)(x => x.StartsWith("Directory")), (Predicate<string>)(x => true)),
+                     Directories,
+                     new EventCounters(Directories, Files) { FilteredDirectoriesFind = DirectoriesCount });
+                yield return new TestCaseData(
+                    Directories,
+                    Files,
+                    Delegate.Combine((Predicate<string>)(x => x.StartsWith("File")), (Predicate<string>)(x => true)),
+                    Files,
+                    new EventCounters(Directories, Files) { FilteredFilesFind = FilesCount });
+                yield return new TestCaseData(
+                   Directories,
+                   Files,
+                   Delegate.Combine((Predicate<string>)(x => false), (Predicate<string>)(x => true)),
+                   Array.Empty<string>(),
+                   new EventCounters(Directories, Files));
+            }
+        }
+
+        [SetUp]
+        protected void Setup() => actualEventCounters.Clear();
 
         [Test]
-        public void Ctor_OneParam() => Assert.DoesNotThrow(() => new FileSystemVisitor(ValidPath));
+        public void Factory_OneParam() => Assert.DoesNotThrow(() => FileSystemVisitor.FileSystemVisitor.CreateInstance(this.validPath), "Create instance with valid path.");
 
         [Test]
-        public void Ctor_TwoParams() => Assert.DoesNotThrow(() => new FileSystemVisitor(ValidPath, x => true));
+        public void Factory_TwoParams() => Assert.DoesNotThrow(() => FileSystemVisitor.FileSystemVisitor.CreateInstance(this.validPath, _ => true),
+            "Create instance with valid path and predicate.");
+
+        [Test]
+        public void Ctor_OneParam() => Assert.DoesNotThrow(() => new FileSystemVisitor.FileSystemVisitor(this.validPath), "Create instance with valid path.");
+
+        [Test]
+        public void Ctor_TwoParams() => Assert.DoesNotThrow(() => new FileSystemVisitor.FileSystemVisitor(this.validPath, _ => true),
+            "Create instance with valid path and predicate.");
 
         [TestCase(null)]
         [TestCase("")]
         [TestCase("    ")]
         [TestCase("6")]
         public void Ctor_PathIsNullOrEmptyOrWhiteSpaceOrNotExist_ThrowArgumentException(string path) =>
-            Assert.Throws<ArgumentException>(() => new FileSystemVisitor(path), "Path is null or empty, or white space, or not exist.");
+            Assert.Throws<ArgumentException>(() => new FileSystemVisitor.FileSystemVisitor(path), "Path is null or empty, or white space, or not exist.");
 
         [Test]
         public void Ctor_PredicateIsNull_ArgumentNullException() =>
-            Assert.Throws<ArgumentNullException>(() => new FileSystemVisitor(ValidPath, null), "Predicate is null.");
+            Assert.Throws<ArgumentNullException>(() => new FileSystemVisitor.FileSystemVisitor(this.validPath, null), "Predicate is null.");
 
-        [TestCaseSource(typeof(TestCasesSource), nameof(TestCasesSource.TestCasesWithoutPredicate))]
-        public void Search_Events_WithoutPredicate(IEnumerable<string> directories, IEnumerable<string> files, IEnumerable<string> expected)
+        [TestCaseSource(nameof(TestCases))]
+        public void Search_Events(IEnumerable<string> directories, IEnumerable<string> files, IEnumerable<string> expected, EventCounters expectedEventCounters)
         {
-            var mock = new Mock<FileSystemVisitor>(ValidPath);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateDirectories", ItExpr.IsAny<string>()).
-                Returns(directories);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateFiles", ItExpr.IsAny<string>()).
-                Returns(files);
-
-            int start = 0;
-            int finish = 0;
-            int directoryFinded = 0;
-            int fileFinded = 0;
-            int filteredDirectoryFinded = 0;
-            int filteredFileFinded = 0;
-            mock.Protected().Setup("OnStart", ItExpr.IsAny<EventArgs>()).Callback(() => start++);
-            mock.Protected().Setup("OnFinish", ItExpr.IsAny<EventArgs>()).Callback(() => finish++);
-            mock.Protected().Setup("OnDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => directoryFinded++);
-            mock.Protected().Setup("OnFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => fileFinded++);
-            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => filteredDirectoryFinded++);
-            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => filteredFileFinded++);
-
+            var mock = CreateMock(directories, files);
             var actual = mock.Object.Search();
 
-            Assert.AreEqual(0, start, "events start count before run");
-            Assert.AreEqual(0, finish, "events finish count before run");
-            Assert.AreEqual(0, directoryFinded, "events directoryFinded count before run");
-            Assert.AreEqual(0, fileFinded, "events fileFinded count before run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count before run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count before run");
-            CollectionAssert.AreEquivalent(expected, actual);
-            Assert.AreEqual(1, start, "events start count after run");
-            Assert.AreEqual(1, finish, "events finish count after run");
-            Assert.AreEqual(directories.Count(), directoryFinded, "events directoryFinded count after run");
-            Assert.AreEqual(files.Count(), fileFinded, "events fileFinded count after run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count after run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count after run");
+            AssertActualEventCountersIsZero();
+            CollectionAssert.AreEqual(expected, actual);
+            AssertEventCounters(expectedEventCounters);
         }
 
-        [TestCaseSource(typeof(TestCasesSource), nameof(TestCasesSource.TestCasesWithPredicate))]
-        public void Search_Events_WithPredicate(IEnumerable<string> directories, IEnumerable<string> files, Predicate<string> predicate, IEnumerable<string> expected)
+        [TestCaseSource(nameof(TestCasesWithPredicate))]
+        public void Search_Events_WithPredicate(IEnumerable<string> directories, IEnumerable<string> files, Predicate<string> predicate, IEnumerable<string> expected, EventCounters expectedEventCounters)
         {
-            var mock = new Mock<FileSystemVisitor>(ValidPath, predicate);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateDirectories", ItExpr.IsAny<string>()).
-                Returns(directories);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateFiles", ItExpr.IsAny<string>()).
-                Returns(files);
-
-            int start = 0;
-            int finish = 0;
-            int directoryFinded = 0;
-            int fileFinded = 0;
-            int filteredDirectoryFinded = 0;
-            int filteredFileFinded = 0;
-            mock.Protected().Setup("OnStart", ItExpr.IsAny<EventArgs>()).Callback(() => start++);
-            mock.Protected().Setup("OnFinish", ItExpr.IsAny<EventArgs>()).Callback(() => finish++);
-            mock.Protected().Setup("OnDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => directoryFinded++);
-            mock.Protected().Setup("OnFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => fileFinded++);
-            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => filteredDirectoryFinded++);
-            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => filteredFileFinded++);
-
+            var mock = CreateMock(directories, files, predicate);
             var actual = mock.Object.Search();
 
-            Assert.AreEqual(0, start, "events start count before run");
-            Assert.AreEqual(0, finish, "events finish count before run");
-            Assert.AreEqual(0, directoryFinded, "events directoryFinded count before run");
-            Assert.AreEqual(0, fileFinded, "events fileFinded count before run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count before run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count before run");
-            CollectionAssert.AreEquivalent(expected, actual);
-            Assert.AreEqual(1, start, "events start count after run");
-            Assert.AreEqual(1, finish, "events finish count after run");
-            Assert.AreEqual(directories.Count(), directoryFinded, "events directoryFinded count after run");
-            Assert.AreEqual(files.Count(), fileFinded, "events fileFinded count after run");
-            Assert.AreEqual(expected.Count(), filteredDirectoryFinded + filteredFileFinded, $"events filteredDirectoryFinded + filteredFileFinded count after run");
+            AssertActualEventCountersIsZero();
+            CollectionAssert.AreEqual(expected, actual);
+            AssertEventCounters(expectedEventCounters);
         }
 
-        [TestCaseSource(typeof(TestCasesSource), nameof(TestCasesSource.TestCasesWithoutPredicate))]
-        public void Search_Events_Skip_WithoutPredicate(IEnumerable<string> directories, IEnumerable<string> files, IEnumerable<string> expected)
+        [TestCaseSource(nameof(TestCases))]
+        public void Search_Events_Skip_5(IEnumerable<string> directories, IEnumerable<string> files, IEnumerable<string> expected, EventCounters expectedEventCounters)
         {
-            expected = Enumerable.Empty<string>();
-            var mock = new Mock<FileSystemVisitor>(ValidPath);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateDirectories", ItExpr.IsAny<string>()).
-                Returns(directories);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateFiles", ItExpr.IsAny<string>()).
-                Returns(files);
-
-            int start = 0;
-            int finish = 0;
-            int directoryFinded = 0;
-            int fileFinded = 0;
-            int filteredDirectoryFinded = 0;
-            int filteredFileFinded = 0;
-            mock.Protected().Setup("OnStart", ItExpr.IsAny<EventArgs>()).Callback(() => start++);
-            mock.Protected().Setup("OnFinish", ItExpr.IsAny<EventArgs>()).Callback(() => finish++);
-            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => filteredDirectoryFinded++);
-            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => filteredFileFinded++);
-            mock.Protected().Setup("OnDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).
-                Callback((FileSystemVisitorEventArgs e) =>
+            int count = 5;
+            expected = expected.Skip(count);
+            var mock = CreateMock(directories, files);
+            mock.Protected().Setup("OnDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback((FileSystemVisitorEventArgs e) => 
                 {
-                    directoryFinded++;
-                    e.Skip = true;
+                    actualEventCounters.DirectoriesFind++;
+                    if (count-- > 0)
+                        e.Skip = true;
                 });
-            mock.Protected().Setup("OnFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).
-                Callback((FileSystemVisitorEventArgs e) =>
+            mock.Protected().Setup("OnFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback((FileSystemVisitorEventArgs e) =>
                 {
-                    fileFinded++;
-                    e.Skip = true;
+                    actualEventCounters.FilesFind++;
+                    if (count-- > 0)
+                        e.Skip = true;
                 });
 
             var actual = mock.Object.Search();
 
-            Assert.AreEqual(0, start, "events start count before run");
-            Assert.AreEqual(0, finish, "events finish count before run");
-            Assert.AreEqual(0, directoryFinded, "events directoryFinded count before run");
-            Assert.AreEqual(0, fileFinded, "events fileFinded count before run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count before run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count before run");
-            CollectionAssert.AreEquivalent(expected, actual);
-            Assert.AreEqual(1, start, "events start count after run");
-            Assert.AreEqual(1, finish, "events finish count after run");
-            Assert.AreEqual(directories.Count(), directoryFinded, $"events directoryFinded count after run");
-            Assert.AreEqual(files.Count(), fileFinded, $"events fileFinded count after run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count after run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count after run");
+            AssertActualEventCountersIsZero();
+            CollectionAssert.AreEqual(expected, actual);
+            AssertEventCounters(expectedEventCounters);
         }
 
-        [TestCaseSource(typeof(TestCasesSource), nameof(TestCasesSource.TestCasesWithPredicate))]
-        public void Search_Events_Skip_WithPredicate(IEnumerable<string> directories, IEnumerable<string> files, Predicate<string> predicate, IEnumerable<string> expected)
+        [TestCaseSource(nameof(TestCasesWithPredicate))]
+        public void Search_Events_Skip_3_WithPredicate(IEnumerable<string> directories, IEnumerable<string> files, Predicate<string> predicate, IEnumerable<string> expected, EventCounters expectedEventCounters)
         {
-            int expectedCount = expected.Count();
-            expected = Enumerable.Empty<string>();
-            var mock = new Mock<FileSystemVisitor>(ValidPath, predicate);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateDirectories", ItExpr.IsAny<string>()).
-                Returns(directories);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateFiles", ItExpr.IsAny<string>()).
-                Returns(files);
-
-            int start = 0;
-            int finish = 0;
-            int directoryFinded = 0;
-            int fileFinded = 0;
-            int filteredDirectoryFinded = 0;
-            int filteredFileFinded = 0;
-            mock.Protected().Setup("OnStart", ItExpr.IsAny<EventArgs>()).Callback(() => start++);
-            mock.Protected().Setup("OnFinish", ItExpr.IsAny<EventArgs>()).Callback(() => finish++);
-            mock.Protected().Setup("OnDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => directoryFinded++);
-            mock.Protected().Setup("OnFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => fileFinded++);
-            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).
-                Callback((FileSystemVisitorEventArgs e) =>
+            int count = 3;
+            expected = expected.Skip(count);
+            var mock = CreateMock(directories, files, predicate);
+            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback((FileSystemVisitorEventArgs e) =>
                 {
-                    filteredDirectoryFinded++;
-                    e.Skip = true;
+                    actualEventCounters.FilteredDirectoriesFind++;
+                    if (count-- > 0)
+                        e.Skip = true;
                 });
-            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).
-                Callback((FileSystemVisitorEventArgs e) =>
+            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback((FileSystemVisitorEventArgs e) =>
                 {
-                    filteredFileFinded++;
-                    e.Skip = true;
+                    actualEventCounters.FilteredFilesFind++;
+                    if (count-- > 0)
+                        e.Skip = true;
                 });
-
 
             var actual = mock.Object.Search();
 
-            Assert.AreEqual(0, start, "events start count before run");
-            Assert.AreEqual(0, finish, "events finish count before run");
-            Assert.AreEqual(0, directoryFinded, "events directoryFinded count before run");
-            Assert.AreEqual(0, fileFinded, "events fileFinded count before run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count before run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count before run");
-            CollectionAssert.AreEquivalent(expected, actual);
-            Assert.AreEqual(1, start, "events start count after run");
-            Assert.AreEqual(1, finish, "events finish count after run");
-            Assert.AreEqual(directories.Count(), directoryFinded, $"events directoryFinded count after run");
-            Assert.AreEqual(files.Count(), fileFinded, $"events fileFinded count after run");
-            Assert.AreEqual(expectedCount, filteredDirectoryFinded + filteredFileFinded, $"events filteredDirectoryFinded + filteredFileFinded count after run");
+            AssertActualEventCountersIsZero();
+            CollectionAssert.AreEqual(expected, actual);
+            AssertEventCounters(expectedEventCounters);
         }
 
-        [TestCaseSource(typeof(TestCasesSource), nameof(TestCasesSource.TestCasesWithoutPredicate))]
-        public void Search_Events_Abort_WithoutPredicate(IEnumerable<string> directories, IEnumerable<string> files, IEnumerable<string> _)
+        [TestCaseSource(nameof(TestCases))]
+        public void Search_Events_Abort_5(IEnumerable<string> directories, IEnumerable<string> files, IEnumerable<string> expected, EventCounters expectedEventCounters)
         {
-            var mock = new Mock<FileSystemVisitor>(ValidPath);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateDirectories", ItExpr.IsAny<string>()).
-                Returns(directories);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateFiles", ItExpr.IsAny<string>()).
-                Returns(files);
+            int count = 5;
+            int eventsCount = count + 1;
+            expected = expected.Take(count);
+            expectedEventCounters.DirectoriesFind = Math.Min(expectedEventCounters.DirectoriesFind, eventsCount);
+            expectedEventCounters.FilesFind = Math.Min(expectedEventCounters.FilesFind, eventsCount - expectedEventCounters.DirectoriesFind);
 
-            int start = 0;
-            int finish = 0;
-            int directoryFinded = 0;
-            int fileFinded = 0;
-            int filteredDirectoryFinded = 0;
-            int filteredFileFinded = 0;
-            mock.Protected().Setup("OnStart", ItExpr.IsAny<EventArgs>()).Callback(() => start++);
-            mock.Protected().Setup("OnFinish", ItExpr.IsAny<EventArgs>()).Callback(() => finish++);
-            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => filteredDirectoryFinded++);
-            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).Callback(() => filteredFileFinded++);
-            mock.Protected().Setup("OnDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).
-                Callback((FileSystemVisitorEventArgs e) =>
+            var mock = CreateMock(directories, files);
+            mock.Protected().Setup("OnDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback((FileSystemVisitorEventArgs e) =>
                 {
-                    directoryFinded++;
-                    e.Abort = true;
+                    actualEventCounters.DirectoriesFind++;
+                    if (--count < 0)
+                        e.Abort = true;
                 });
-            mock.Protected().Setup("OnFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).
-                Callback((FileSystemVisitorEventArgs e) =>
+            mock.Protected().Setup("OnFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback((FileSystemVisitorEventArgs e) =>
                 {
-                    fileFinded++;
-                    e.Abort = true;
+                    actualEventCounters.FilesFind++;
+                    if (--count < 0)
+                        e.Abort = true;
                 });
 
             var actual = mock.Object.Search();
 
-            Assert.AreEqual(0, start, "events start count before run");
-            Assert.AreEqual(0, finish, "events finish count before run");
-            Assert.AreEqual(0, directoryFinded, "events directoryFinded count before run");
-            Assert.AreEqual(0, fileFinded, "events fileFinded count before run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count before run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count before run");
-            CollectionAssert.AreEquivalent(Enumerable.Empty<string>(), actual);
-            Assert.AreEqual(1, start, "events start count after run");
-            Assert.AreEqual(1, finish, "events finish count after run");
-            int expectedDirectoryFinded = directoryFinded > 0 ? 1 : 0;
-            int expectedfilesFinded = directoryFinded > 0 ? 0 : 1;
-            Assert.AreEqual(expectedDirectoryFinded, directoryFinded, $"events directoryFinded count after run");
-            Assert.AreEqual(expectedfilesFinded, fileFinded, $"events fileFinded count after run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count after run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count after run");
+            AssertActualEventCountersIsZero();
+            CollectionAssert.AreEqual(expected, actual);
+            AssertEventCounters(expectedEventCounters);
         }
 
-        [TestCaseSource(typeof(TestCasesSource), nameof(TestCasesSource.TestCasesWithPredicate))]
-        public void Search_Events_Abort_WithPredicate(IEnumerable<string> directories, IEnumerable<string> files, Predicate<string> predicate, IEnumerable<string> _)
+        [TestCaseSource(nameof(TestCasesWithPredicate))]
+        public void Search_Events_Abort_3_WithPredicate(IEnumerable<string> directories, IEnumerable<string> files, Predicate<string> predicate, IEnumerable<string> expected, EventCounters expectedEventCounters)
         {
-            var mock = new Mock<FileSystemVisitor>(ValidPath, predicate);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateDirectories", ItExpr.IsAny<string>()).
-                Returns(directories);
-            mock.Protected().
-                SetupSequence<IEnumerable<string>>("EnumerateFiles", ItExpr.IsAny<string>()).
-                Returns(files);
+            int count = 3;
+            int eventsCount = count + 1;
+            expected = expected.Take(count);
+            expectedEventCounters.FilteredDirectoriesFind = Math.Min(expectedEventCounters.FilteredDirectoriesFind, eventsCount);
+            expectedEventCounters.FilteredFilesFind = Math.Min(expectedEventCounters.FilteredFilesFind, eventsCount - expectedEventCounters.FilteredDirectoriesFind);
 
-            int start = 0;
-            int finish = 0;
-            int filteredDirectoryFinded = 0;
-            int filteredFileFinded = 0;
-            mock.Protected().Setup("OnStart", ItExpr.IsAny<EventArgs>()).Callback(() => start++);
-            mock.Protected().Setup("OnFinish", ItExpr.IsAny<EventArgs>()).Callback(() => finish++);
-            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).
-                Callback((FileSystemVisitorEventArgs e) =>
+            var mock = CreateMock(directories, files, predicate);
+            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback((FileSystemVisitorEventArgs e) =>
                 {
-                    filteredDirectoryFinded++;
-                    e.Abort = true;
+                    actualEventCounters.FilteredDirectoriesFind++;
+                    if (--count < 0)
+                        e.Abort = true;
                 });
-            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>()).
-                Callback((FileSystemVisitorEventArgs e) =>
+            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback((FileSystemVisitorEventArgs e) =>
                 {
-                    filteredFileFinded++;
-                    e.Abort = true;
+                    actualEventCounters.FilteredFilesFind++;
+                    if (--count < 0)
+                        e.Abort = true;
                 });
-
 
             var actual = mock.Object.Search();
 
-            Assert.AreEqual(0, start, "events start count before run");
-            Assert.AreEqual(0, finish, "events finish count before run");
-            Assert.AreEqual(0, filteredDirectoryFinded, "events filteredDirectoryFinded count before run");
-            Assert.AreEqual(0, filteredFileFinded, "events filteredFileFinded count before run");
-            CollectionAssert.AreEquivalent(Enumerable.Empty<string>(), actual);
-            Assert.AreEqual(1, start, "events start count after run");
-            Assert.AreEqual(1, finish, "events finish count after run");
-            int expectedDirectoryFinded = filteredDirectoryFinded > 0 ? 1 : 0;
-            int expectedfilesFinded = filteredDirectoryFinded > 0 ? 0 : filteredFileFinded;
-            Assert.AreEqual(expectedDirectoryFinded, filteredDirectoryFinded, "events filteredDirectoryFinded count after run");
-            Assert.IsTrue(expectedfilesFinded <= 1, "events filteredFileFinded count after run");
+            AssertActualEventCountersIsZero();
+            CollectionAssert.AreEqual(expected, actual);
+
+            expectedEventCounters.DirectoriesFind = actualEventCounters.DirectoriesFind;
+            expectedEventCounters.FilesFind = actualEventCounters.FilesFind;
+            AssertEventCounters(expectedEventCounters);
+        }
+
+        private void AssertActualEventCountersIsZero()
+        {
+            Assert.AreEqual(0, actualEventCounters.Start, "Start event counter before iteration. Search should be lazy.");
+            Assert.AreEqual(0, actualEventCounters.Finish, "Finish event counter before iteration. Search should be lazy.");
+            Assert.AreEqual(0, actualEventCounters.DirectoriesFind, "DirectoryFinded event counter before iteration. Search should be lazy.");
+            Assert.AreEqual(0, actualEventCounters.FilesFind, "FileFinded event counter before iteration. Search should be lazy.");
+            Assert.AreEqual(0, actualEventCounters.FilteredDirectoriesFind, "FilteredDirectoryFinded event counter before iteration. Search should be lazy.");
+            Assert.AreEqual(0, actualEventCounters.FilteredFilesFind, "FilteredFileFinded event counter before iteration. Search should be lazy.");
+        }
+
+        private void AssertEventCounters(EventCounters expected)
+        {
+            Assert.AreEqual(expected.Start, actualEventCounters.Start, "Start event counter after iteration.");
+            Assert.AreEqual(expected.Finish, actualEventCounters.Finish, "Finish event counter after iteration.");
+            Assert.AreEqual(expected.DirectoriesFind, actualEventCounters.DirectoriesFind, "DirectoryFinded event counter after iteration.");
+            Assert.AreEqual(expected.FilesFind, actualEventCounters.FilesFind, "FileFinded event counter after iteration.");
+            Assert.AreEqual(expected.FilteredDirectoriesFind, actualEventCounters.FilteredDirectoriesFind, "FilteredDirectoryFinded event counter after iteration.");
+            Assert.AreEqual(expected.FilteredFilesFind, actualEventCounters.FilteredFilesFind, "FilteredFileFinded event counter after iteration.");
+        }
+
+        private Mock<FileSystemVisitor.FileSystemVisitor> CreateMock(IEnumerable<string> directories, IEnumerable<string> files, Predicate<string> predicate = null)
+        {
+            var mock = predicate is null ? new Mock<FileSystemVisitor.FileSystemVisitor>(validPath) : new Mock<FileSystemVisitor.FileSystemVisitor>(validPath, predicate);
+            mock.Protected().SetupSequence<IEnumerable<string>>("EnumerateDirectories", ItExpr.IsAny<string>())
+                .Returns(directories);
+            mock.Protected().SetupSequence<IEnumerable<string>>("EnumerateFiles", ItExpr.IsAny<string>())
+                .Returns(files);
+
+            mock.Protected().Setup("OnStart", ItExpr.IsAny<EventArgs>())
+                .Callback(() => actualEventCounters.Start++);
+            mock.Protected().Setup("OnFinish", ItExpr.IsAny<EventArgs>())
+                .Callback(() => actualEventCounters.Finish++);
+            mock.Protected().Setup("OnDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback(() => actualEventCounters.DirectoriesFind++);
+            mock.Protected().Setup("OnFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback(() => actualEventCounters.FilesFind++);
+            mock.Protected().Setup("OnFilteredDirectoryFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback(() => actualEventCounters.FilteredDirectoriesFind++);
+            mock.Protected().Setup("OnFilteredFileFinded", ItExpr.IsAny<FileSystemVisitorEventArgs>())
+                .Callback(() => actualEventCounters.FilteredFilesFind++);
+            return mock;
+        }
+
+        internal class EventCounters
+        {
+            internal int Start;
+            internal int Finish;
+            internal int DirectoriesFind;
+            internal int FilesFind;
+            internal int FilteredDirectoriesFind;
+            internal int FilteredFilesFind;
+
+            public EventCounters()
+            {
+            }
+
+            public EventCounters(IEnumerable<string> directories, IEnumerable<string> files)
+                : this()
+            {
+                this.Start = 1;
+                this.Finish = 1;
+                this.DirectoriesFind = directories?.Count() ?? 0;
+                this.FilesFind = files?.Count() ?? 0;
+                this.FilteredDirectoriesFind = 0;
+                this.FilteredFilesFind = 0;
+            }
+
+            public void Clear()
+            {
+                Start = 0;
+                Finish = 0;
+                DirectoriesFind = 0;
+                FilesFind = 0;
+                FilteredDirectoriesFind = 0;
+                FilteredFilesFind = 0;
+            }
         }
     }
 }

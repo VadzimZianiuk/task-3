@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace FSVisitor
+namespace FileSystemVisitor
 {
     /// <summary>
     /// Contain event data.

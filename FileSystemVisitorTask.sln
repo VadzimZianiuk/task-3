@@ -7,7 +7,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "FileSystemVisitor", "FileSy
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ConsoleApp", "ConsoleApp\ConsoleApp.csproj", "{752C11D9-38F5-461E-91B2-D170E4F09A45}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FileSystemVisitorTests", "FileSystemVisitorTests\FileSystemVisitorTests.csproj", "{582A40F6-C074-4422-90FA-F9BD68DC582D}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "FileSystemVisitorTests", "FileSystemVisitorTests\FileSystemVisitorTests.csproj", "{582A40F6-C074-4422-90FA-F9BD68DC582D}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{2A741FD3-3F86-4ACC-8B71-D09B1F3A8003}"
 	ProjectSection(SolutionItems) = preProject
